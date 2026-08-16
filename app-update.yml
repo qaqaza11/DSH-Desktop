@@ -1,6 +1,6 @@
 # DSH Desktop 自动更新源(模仿 Oh-DSH 的 app-update.yml)
-# 发布前取消注释并填上你的 GitHub 仓库; 保持注释状态则随包分发后不生效,
-# 客户端会退回到 DSH_DESKTOP_UPDATE_REPO / DSH_DESKTOP_UPDATE_URL 环境变量。
-#
-# owner: your-github-name
-# repo: dsh-desktop
+# 客户端会请求 https://api.github.com/repos/<owner>/<repo>/releases/latest,
+# 与自身版本做严格 SemVer 比较; 有新版本时下载安装包并提示升级。
+# 环境变量 DSH_DESKTOP_UPDATE_URL / DSH_DESKTOP_UPDATE_REPO 可以覆盖本文件。
+owner: qaqaza11
+repo: DSH-Desktop
