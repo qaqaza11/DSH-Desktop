@@ -523,6 +523,7 @@ async function checkForUpdates({ manual = false } = {}) {
       return
     }
     if (result.status === 'update-available') {
+      console.log(`发现新版本: ${result.latestVersion} (当前 ${result.currentVersion})`)
       updateDialogOpen = true
       try {
         const choice = await dialog.showMessageBox({
@@ -700,6 +701,15 @@ async function startup() {
 async function main() {
   setupLogFile() // 先于 setName: 让日志落在 Chromium 实际使用的 userData(%APPDATA%\dsh-desktop)
   app.setName(APP_NAME)
+  // 验收/CI 测试钩子: 仅当显式设置 DSH_DESKTOP_TEST_QUIT_MS(毫秒)时,
+  // 到期后走真实退出路径(quitApp -> killChildTree), 供无人值守验证"退出后子进程清理"
+  const testQuitMs = Number(process.env.DSH_DESKTOP_TEST_QUIT_MS)
+  if (Number.isInteger(testQuitMs) && testQuitMs > 0) {
+    setTimeout(() => {
+      console.log(`[test] DSH_DESKTOP_TEST_QUIT_MS 到期, 触发真实退出路径`)
+      quitApp()
+    }, testQuitMs)
+  }
   await startup()
   app.on('activate', () => showWindow())
 }

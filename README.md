@@ -44,6 +44,7 @@ npm run dist
 
 - 启动时若指定端口没有服务, 会自动拉起 `dsh --profile <profile> --port <port>`(默认 `web` / `3080`); 端口探测会校验 DSH 的 HTML 指纹(`__DSH_BOOT__`), 端口被其他程序占用时不会误连
 - 启动失败会弹出可复制的诊断窗口(实际启动命令、端口探测结论、dsh 日志末尾), 并自动复制到剪贴板; 窗口内提供「重试启动」(免退出重开)与「打开日志」按钮, 日志落盘在 `%APPDATA%\dsh-desktop\logs\dsh-desktop.log`
+- 发布前验收: `powershell -ExecutionPolicy Bypass -File scripts/acceptance.ps1`(6 项自动化验收, 详见 [docs/acceptance.md](docs/acceptance.md))
 - 关闭窗口 = 最小化到托盘; 托盘菜单可重新打开/退出
 - 托盘菜单「检查更新」手动检查更新; 启动后 8 秒自动静默检查, 之后每 6 小时一次
 - 环境变量:
