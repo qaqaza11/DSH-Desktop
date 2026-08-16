@@ -58,11 +58,11 @@ npm run dist
 
 ## 自动更新(模仿 Oh-DSH)
 
-把 `owner`/`repo` 写进项目根目录的 `app-update.yml` 并随包发布, 或设置 `DSH_DESKTOP_UPDATE_REPO` 环境变量:
+把 `owner`/`repo` 写进项目根目录的 `app-update.yml` 并随包发布, 或设置 `DSH_DESKTOP_UPDATE_REPO` 环境变量(本项目已配置 `qaqaza11/DSH-Desktop`):
 
 ```yaml
-owner: your-name
-repo: dsh-desktop
+owner: qaqaza11
+repo: DSH-Desktop
 ```
 
 - 检查走 GitHub Releases API(`/releases/latest`), 兼容 `{"tag_name":"vX.Y.Z","assets":[...]}` 响应
@@ -70,6 +70,12 @@ repo: dsh-desktop
 - 安全边界: 在接入代码签名或 SHA-256 自动校验之前, 下载后**不自动执行安装包** —— 弹出文件 SHA-256(自动复制到剪贴板)供与 Release 页面核对, 并提供「打开所在文件夹 / 查看 Release 页面」入口, 由用户手动安装
 - 安装包选择顺序: 资产名含 `setup` > 含 `portable` > 任意 `.exe`; 也支持 `DSH_DESKTOP_UPDATE_EXE_URL` 直连
 - 发布流程: `npm run dist` → 把 `dist/DSH Desktop Setup x.y.z.exe` 作为 release 资产上传, tag 用 `vx.y.z` 即可
+
+## Windows 信任与代码签名(如实说明)
+
+- **当前安装包未签名**: Windows SmartScreen 可能提示「未知发布者」, 浏览器下载后可能提示"保留"; **本项目不承诺"完全无提示安装"**。缓解方式: 只从 GitHub Releases 官方渠道下载, 并核对页面公布的 SHA-256(应用内更新下载后也会自动把校验值复制到剪贴板)
+- 打包管线已按 electron-builder 标准支持代码签名(PFX 证书用 `CSC_LINK`/`CSC_KEY_PASSWORD` 环境变量, 或 Azure Trusted Signing 的 `win.azureSignOptions`), 拿到证书后 `npm run dist` 自动签名, 无需改代码。申请与接入步骤见 [docs/signing.md](docs/signing.md)
+- 如实预期: 代码签名解决"发布者身份与防篡改", 但**新证书初期 SmartScreen 仍可能出现提示**(信誉需要时间与下载量积累), 请在文档/Release 中如实告知用户
 
 ## 产物
 

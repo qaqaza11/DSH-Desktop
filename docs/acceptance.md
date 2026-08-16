@@ -26,6 +26,7 @@
 2. 升级确认框: 「下载」后安装包落入 `下载\DSH-Desktop-Updates\`, 弹窗展示 SHA-256 且不自动执行
 3. 诊断窗口: 「复制诊断信息」「打开日志」「重试启动」按钮可用(重试在端口恢复后可自愈)
 4. 卸载: 控制面板或 `Uninstall DSH Desktop.exe` 卸载后, 安装目录被清除
+5. 安装包签名核验: `(Get-AuthenticodeSignature 'dist\DSH Desktop Setup x.y.z.exe').Status` —— 未签名阶段预期 `NotSigned`(此时必须在 README/Release 如实标注 SmartScreen 可能提示); 签名接入后预期 `Valid` 且签名者主题正确
 
 ## 备注
 
