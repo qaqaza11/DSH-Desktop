@@ -4,7 +4,23 @@
   "description": "DeepSeek Harness 桌面端：本地启动 dsh web 服务并以 Electron 窗口加载",
   "main": "main.js",
   "license": "MIT",
+  "author": "qaqaza11",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qaqaza11/DSH-Desktop.git"
+  },
+  "homepage": "https://github.com/qaqaza11/DSH-Desktop",
+  "bugs": {
+    "url": "https://github.com/qaqaza11/DSH-Desktop/issues"
+  },
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "desktop",
+    "electron"
+  ],
   "scripts": {
     "start": "electron .",
     "test": "node test/update.test.mjs",
