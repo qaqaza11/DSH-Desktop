@@ -177,8 +177,8 @@ function startDshService() {
     appendDshLog(`[dsh 进程启动失败] ${err.message}\n`)
   })
   // spawn 失败时 stdout/stderr 可能为 null, 需防御
-  if (child.stdout) child.stdout.on('data', (d) => { process.stdout.write(`[dsh] ${d}`); appendDshLog(d) })
-  if (child.stderr) child.stderr.on('data', (d) => { process.stderr.write(`[dsh] ${d}`); appendDshLog(d) })
+  if (child.stdout) child.stdout.on('data', (d) => { process.stdout.write(`[dsh] ${d}`); appendDshLog(d); appendLogRaw(d) })
+  if (child.stderr) child.stderr.on('data', (d) => { process.stderr.write(`[dsh] ${d}`); appendDshLog(d); appendLogRaw(d) })
   child.on('exit', (code, signal) => {
     console.log(`dsh 进程退出: code=${code} signal=${signal}`)
     appendDshLog(`[dsh 进程退出] code=${code} signal=${signal}\n`)
@@ -219,11 +219,49 @@ function dialogError(title, detail) {
   try { dialog.showErrorBox(title, detail) } catch { /* ignore */ }
 }
 
+// ---------- 日志文件 ----------
+// 主进程 console 输出与 dsh 子进程输出都会追加到 userData/logs/dsh-desktop.log,
+// 诊断窗口的「打开日志」按钮直接打开该文件; 写入失败时静默降级(仅控制台)。
+let logStream = null
+let logFilePath = null
+function appendLogRaw(text) {
+  if (logStream) { try { logStream.write(text) } catch { /* ignore */ } }
+}
+function safeStringify(v) {
+  try { return JSON.stringify(v) } catch { return String(v) }
+}
+function setupLogFile() {
+  try {
+    const dir = path.join(app.getPath('userData'), 'logs')
+    fs.mkdirSync(dir, { recursive: true })
+    logFilePath = path.join(dir, 'dsh-desktop.log')
+    logStream = fs.createWriteStream(logFilePath, { flags: 'a' })
+    const origLog = console.log
+    const origError = console.error
+    console.log = (...args) => {
+      const line = `[${new Date().toISOString()}] ${args.map(a => (typeof a === 'string' ? a : safeStringify(a))).join(' ')}\n`
+      appendLogRaw(line)
+      origLog(...args)
+    }
+    console.error = (...args) => {
+      const line = `[${new Date().toISOString()}] [error] ${args.map(a => (typeof a === 'string' ? a : safeStringify(a))).join(' ')}\n`
+      appendLogRaw(line)
+      origError(...args)
+    }
+  } catch (e) {
+    console.error('日志文件初始化失败:', e.message)
+    logStream = null
+    logFilePath = null
+  }
+}
+
 // ---------- 诊断窗口 ----------
 // 失败时展示可复制/可选中文本的诊断信息: 实际启动命令、端口、端口探测结论、dsh 日志末尾。
-// 内容同时自动写入剪贴板。渲染层保持 sandbox, 只通过 lib/diag-preload.js 暴露复制/关闭两个动作。
+// 内容同时自动写入剪贴板; 提供「重试启动 / 打开日志」入口, 不必退出应用再打开。
+// 渲染层保持 sandbox, 只通过 lib/diag-preload.js 暴露少量动作。
 let diagWindow = null
 let diagText = ''
+let diagQuitOnClose = false // 启动失败时置位: 用户直接关掉诊断窗口 = 放弃并退出应用
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -236,8 +274,23 @@ ipcMain.on('diag-copy', () => {
 ipcMain.on('diag-close', () => {
   if (diagWindow && !diagWindow.isDestroyed()) diagWindow.close()
 })
+ipcMain.on('diag-retry', () => {
+  diagQuitOnClose = false // 先撤掉"关闭即退出"标记, 生命周期交给 startup()
+  if (diagWindow && !diagWindow.isDestroyed()) diagWindow.close()
+  void startup()
+})
+ipcMain.on('diag-open-log', () => {
+  if (logFilePath && fs.existsSync(logFilePath)) {
+    shell.openPath(logFilePath).then((err) => {
+      if (err) shell.showItemInFolder(logFilePath)
+    })
+  } else {
+    dialogError('日志不可用', '日志文件尚未生成或不可写。')
+  }
+})
 
-function showDiagWindow(title) {
+function showDiagWindow(title, opts = {}) {
+  diagQuitOnClose = !!opts.quitOnClose
   const command = DSH_CMD ? `"${DSH_CMD}" --profile ${DSH_PROFILE} --port ${DSH_WEB_PORT}` : '(未找到 dsh CLI)'
   diagText = [
     '实际启动命令:',
@@ -245,6 +298,8 @@ function showDiagWindow(title) {
     '',
     `端口: ${DSH_WEB_PORT}`,
     `端口探测: ${PORT_STATE_TEXT[lastProbeState] || lastProbeState}`,
+    '',
+    `日志文件: ${logFilePath || '(未启用)'}`,
     '',
     `dsh 输出日志(末尾 ${DSH_LOG_TAIL_LIMIT} 字符):`,
     '----------------------------------------',
@@ -266,10 +321,12 @@ function showDiagWindow(title) {
 </style></head><body>
   <h2>${escapeHtml(title)}</h2>
   <pre id="diag"></pre>
-  <div class="bar"><button id="copy">复制诊断信息</button><button id="close">关闭</button></div>
+  <div class="bar"><button id="retry">重试启动</button><button id="open-log">打开日志</button><button id="copy">复制诊断信息</button><button id="close">关闭</button></div>
   <div class="hint">诊断信息已自动复制到剪贴板, 也可以直接选中上方文本手动复制。</div>
   <script>
     document.getElementById('diag').textContent = ${JSON.stringify(diagText).replace(/</g, '\\u003c')}
+    document.getElementById('retry').onclick = () => { window.diag && window.diag.retry() }
+    document.getElementById('open-log').onclick = () => { window.diag && window.diag.openLog() }
     document.getElementById('copy').onclick = () => { window.diag && window.diag.copy() }
     document.getElementById('close').onclick = () => { window.diag && window.diag.close() }
   </script></body></html>`
@@ -288,7 +345,13 @@ function showDiagWindow(title) {
     },
   })
   diagWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html)).catch(() => {})
-  diagWindow.on('closed', () => { diagWindow = null })
+  diagWindow.on('closed', () => {
+    diagWindow = null
+    if (diagQuitOnClose) {
+      diagQuitOnClose = false
+      app.quit()
+    }
+  })
 }
 
 // ---------- 窗口 ----------
@@ -565,36 +628,59 @@ function resolveInstallerUrls(latestVersion, assets = []) {
   return urls
 }
 // ---------- 生命周期 ----------
-async function main() {
-  app.setName(APP_NAME)
+let trayCreated = false
+let autoUpdateStarted = false
+let startupInProgress = false
 
-  // 1) 先创建窗口(显示"正在启动服务"占位页), 避免用户面对空白
-  createWindow()
+// 启动/恢复流程: 可被诊断窗口的「重试启动」反复调用;
+// 内部保留 ensureService 的三次重试, 失败只弹诊断窗口, 不再要求退出重开。
+async function startup() {
+  if (startupInProgress) return false
+  startupInProgress = true
+  try {
+    // 1) 窗口(被销毁则重建, 显示"正在启动服务"占位页), 避免用户面对空白
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow()
 
-  // 2) 确保本地服务在运行(带重试, 首次启动初始化慢/中途退出都静默处理)
-  const up = await ensureService()
-  if (!up) {
-    console.error(`dsh 服务启动失败 (端口探测: ${lastProbeState})`)
-    // 关掉"正在启动服务"的占位窗口, 只保留诊断窗口; 诊断窗口关闭后退出应用
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy()
-    showDiagWindow('无法启动 dsh 服务')
-    if (diagWindow) diagWindow.once('closed', () => app.quit())
-    return
+    // 2) 确保本地服务在运行(带重试, 首次启动初始化慢/中途退出都静默处理)
+    const up = await ensureService()
+    if (!up) {
+      console.error(`dsh 服务启动失败 (端口探测: ${lastProbeState})`)
+      // 关掉"正在启动服务"的占位窗口, 只保留诊断窗口; 直接关闭诊断窗口才退出应用
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy()
+      showDiagWindow('无法启动 dsh 服务', { quitOnClose: true })
+      return false
+    }
+    console.log(`dsh web 已就绪: ${WEB_URL} (profile: ${DSH_PROFILE})`)
+
+    // 3) 加载真实界面 + 托盘; 若是"重试"路径, 先撤掉退出标记再关诊断窗口
+    diagQuitOnClose = false
+    if (diagWindow && !diagWindow.isDestroyed()) diagWindow.close()
+    mainWindow.loadURL(WEB_URL).catch((err) => {
+      console.error(`页面加载失败: ${err.message}`)
+      dialogError('页面加载失败', `无法加载 ${WEB_URL}\n${err.message}`)
+    })
+    if (!trayCreated) {
+      createTray()
+      trayCreated = true
+    }
+
+    // 4) 启动后 8 秒自动检查更新(静默, 无更新不打扰); 之后每 6 小时静默检查一次
+    if (!autoUpdateStarted) {
+      setTimeout(() => { void checkForUpdates({ manual: false }) }, 8000)
+      setInterval(() => { void checkForUpdates({ manual: false }) }, AUTO_CHECK_INTERVAL_MS)
+      autoUpdateStarted = true
+    }
+    return true
+  } finally {
+    startupInProgress = false
   }
-  console.log(`dsh web 已就绪: ${WEB_URL} (profile: ${DSH_PROFILE})`)
+}
 
-  // 3) 加载真实界面 + 托盘
-  mainWindow.loadURL(WEB_URL).catch((err) => {
-    console.error(`页面加载失败: ${err.message}`)
-    dialogError('页面加载失败', `无法加载 ${WEB_URL}\n${err.message}`)
-  })
-  createTray()
-
+async function main() {
+  setupLogFile() // 先于 setName: 让日志落在 Chromium 实际使用的 userData(%APPDATA%\dsh-desktop)
+  app.setName(APP_NAME)
+  await startup()
   app.on('activate', () => showWindow())
-
-  // 4) 启动后 8 秒自动检查更新(静默, 无更新不打扰); 之后每 6 小时静默检查一次
-  setTimeout(() => { void checkForUpdates({ manual: false }) }, 8000)
-  setInterval(() => { void checkForUpdates({ manual: false }) }, AUTO_CHECK_INTERVAL_MS)
 }
 
 function quitApp() {
