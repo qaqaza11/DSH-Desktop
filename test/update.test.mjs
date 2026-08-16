@@ -16,12 +16,14 @@ t('自定义 JSON: 新版本 -> update-available', () => {
   assert.equal(r.status, 'update-available')
   assert.equal(r.latestVersion, '0.2.0')
   assert.deepEqual(r.assets, [])
+  assert.equal(r.releaseUrl, '')
 })
 
-t('GitHub API: tag_name v 前缀 + assets 数组', () => {
+t('GitHub API: tag_name v 前缀 + assets 数组 + releaseUrl', () => {
   const payload = JSON.stringify({
     tag_name: 'v0.1.1',
     name: 'v0.1.1',
+    html_url: 'https://github.com/qaqaza11/DSH-Desktop/releases/tag/v0.1.1',
     assets: [
       { name: 'DSH Desktop Setup 0.1.1.exe', browser_download_url: 'https://example.com/setup.exe' },
       { name: 'DSH-Desktop-Portable-0.1.1.exe', browser_download_url: 'https://example.com/portable.exe' },
@@ -33,6 +35,7 @@ t('GitHub API: tag_name v 前缀 + assets 数组', () => {
   assert.equal(r.latestVersion, 'v0.1.1')
   assert.equal(r.assets.length, 3)
   assert.equal(r.assets[0].name, 'DSH Desktop Setup 0.1.1.exe')
+  assert.equal(r.releaseUrl, 'https://github.com/qaqaza11/DSH-Desktop/releases/tag/v0.1.1')
 })
 
 t('同版本 -> up-to-date', () => {

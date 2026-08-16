@@ -11,6 +11,7 @@ const path = require('node:path')
 const fs = require('node:fs')
 const os = require('node:os')
 const { Readable } = require('node:stream')
+const { createHash } = require('node:crypto')
 const { parseUpdateResponse } = require('./lib/update.js')
 
 // ---------- 配置 ----------
@@ -535,7 +536,7 @@ async function checkForUpdates({ manual = false } = {}) {
           noLink: true,
         })
         if (choice.response === 0) {
-          await downloadAndOpenUpdate(result.latestVersion, result.assets)
+          await downloadUpdateInstaller(result.latestVersion, result.assets, result.releaseUrl)
         }
       } finally {
         updateDialogOpen = false
@@ -556,7 +557,10 @@ async function checkForUpdates({ manual = false } = {}) {
   }
 }
 
-async function downloadAndOpenUpdate(latestVersion, assets = []) {
+// 下载安装包但【不自动执行】: 在接入代码签名或 SHA-256 自动校验之前,
+// 只把安装包保存到本机, 展示其 SHA-256(自动复制到剪贴板)供用户与发布者核对,
+// 并提供「打开所在文件夹 / 查看 Release 页面」入口, 由用户核对后手动安装。
+async function downloadUpdateInstaller(latestVersion, assets = [], releaseUrl = '') {
   const installers = resolveInstallerUrls(latestVersion, assets)
   if (installers.length === 0) {
     dialogError('无法下载更新', '更新服务未提供安装包下载地址。')
@@ -587,30 +591,47 @@ async function downloadAndOpenUpdate(latestVersion, assets = []) {
   fs.copyFileSync(tmp, dest)
   fs.unlinkSync(tmp)
 
+  // 计算 SHA-256 供人工核对, 并把文件位置与校验值复制到剪贴板
+  const sha256 = await fileSha256(dest)
+  const pageUrl = buildReleaseUrl(latestVersion, releaseUrl)
+  try {
+    clipboard.writeText(`DSH Desktop ${latestVersion}\nSHA-256: ${sha256}\n文件: ${dest}`)
+  } catch { /* ignore */ }
+
+  const buttons = pageUrl ? ['打开所在文件夹', '查看 Release 页面', '稍后'] : ['打开所在文件夹', '稍后']
   const choice = await dialog.showMessageBox({
     type: 'info',
     title: '更新已下载',
     message: `DSH Desktop ${latestVersion} 安装包已下载`,
-    detail: `位置: ${dest}\n\n立即运行安装程序?`,
-    buttons: ['立即安装', '打开所在文件夹', '稍后'],
+    detail: `位置: ${dest}\n\nSHA-256:\n${sha256}\n(已复制到剪贴板)\n\n当前版本未启用自动安装: 请核对校验值后手动运行安装包。`,
+    buttons,
     defaultId: 0,
-    cancelId: 2,
+    cancelId: buttons.length - 1,
     noLink: true,
   })
-  if (choice.response === 0) {
-    // 先退出本应用再运行安装器: 否则 NSIS 无法覆盖正在运行的主程序文件
-    // (与 electron-updater 的"退出后安装"行为一致)
-    quitApp()
-    spawn(dest, ['--updated', '--force-run'], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: false,
-    }).on('error', (err) => {
-      dialogError('启动安装程序失败', err.message)
-    }).unref()
-  } else if (choice.response === 1) {
-    shell.showItemInFolder(dest)
+  if (choice.response === 0) shell.showItemInFolder(dest)
+  else if (choice.response === 1 && pageUrl) shell.openExternal(pageUrl)
+}
+
+// 流式计算文件 SHA-256
+function fileSha256(file) {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256')
+    const stream = fs.createReadStream(file)
+    stream.on('data', (d) => hash.update(d))
+    stream.on('end', () => resolve(hash.digest('hex')))
+    stream.on('error', reject)
+  })
+}
+
+// Release 页面地址: 优先更新响应里的 html_url, 否则用仓库 + tag 拼接
+function buildReleaseUrl(latestVersion, releaseUrl) {
+  if (typeof releaseUrl === 'string' && releaseUrl) return releaseUrl
+  if (APP_UPDATE_REPO) {
+    const tag = /^v/i.test(String(latestVersion)) ? String(latestVersion) : `v${latestVersion}`
+    return `https://github.com/${APP_UPDATE_REPO}/releases/tag/${tag}`
   }
+  return ''
 }
 
 // 从更新响应中提取可能的安装包 URL:

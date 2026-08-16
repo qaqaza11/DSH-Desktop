@@ -49,7 +49,7 @@ npm run dist
   - `DSH_DESKTOP_PROFILE` — 覆盖 dsh profile(默认 `web`, 仅允许字母/数字/`-`/`_`; 多实例时与端口一起错开, 避免与已有 3080 服务撞车)。注意: 目标 profile 必须先包含 Web 界面 bundle —— 用 `dsh plugin --profile <name> add @deepseek-ai/dsh-web-app` 创建, 或直接克隆已有的 `~/.dsh/profiles/web` 整个目录; 只有 `dsh-base` 的裸 profile 没有浏览器界面, 会一直起不来
   - `DSH_DESKTOP_UPDATE_URL` — 自定义更新检查地址(返回 `{"version":"x.y.z"}` 或 `{"tag_name":"vx.y.z"}`, 如 GitHub Releases API)
   - `DSH_DESKTOP_UPDATE_REPO` — 更省事: 填 `owner/repo`(如 `someone/dsh-desktop`), 自动使用 `https://api.github.com/repos/<owner/repo>/releases/latest` 作为更新源
-  - `DSH_DESKTOP_UPDATE_EXE_URL` — 更新安装包的下载地址; 有更新时用户确认后下载并提示安装
+  - `DSH_DESKTOP_UPDATE_EXE_URL` — 更新安装包的下载地址; 有更新时用户确认后下载保存(不自动执行, 需人工核对 SHA-256 后手动安装)
   - 以上更新源都未配置时, 会读取随包分发的 `resources/app-update.yml`(`owner`/`repo` 两个字段, 与 Oh-DSH 同款); 仍然没有则跳过检查
 
 ## 自动更新(模仿 Oh-DSH)
@@ -63,6 +63,7 @@ repo: dsh-desktop
 
 - 检查走 GitHub Releases API(`/releases/latest`), 兼容 `{"tag_name":"vX.Y.Z","assets":[...]}` 响应
 - 版本比较用严格 SemVer(支持 `v` 前缀与预发布版本); 有更新时弹窗确认后下载安装包
+- 安全边界: 在接入代码签名或 SHA-256 自动校验之前, 下载后**不自动执行安装包** —— 弹出文件 SHA-256(自动复制到剪贴板)供与 Release 页面核对, 并提供「打开所在文件夹 / 查看 Release 页面」入口, 由用户手动安装
 - 安装包选择顺序: 资产名含 `setup` > 含 `portable` > 任意 `.exe`; 也支持 `DSH_DESKTOP_UPDATE_EXE_URL` 直连
 - 发布流程: `npm run dist` → 把 `dist/DSH Desktop Setup x.y.z.exe` 作为 release 资产上传, tag 用 `vx.y.z` 即可
 
