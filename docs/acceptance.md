@@ -29,7 +29,7 @@
 3. 诊断窗口: 「复制诊断信息」「打开日志」「重试启动」按钮可用(重试在端口恢复后可自愈)
 4. 卸载: 控制面板或 `Uninstall DSH Desktop.exe` 卸载后, 安装目录被清除
 5. 安装包签名核验: `(Get-AuthenticodeSignature 'dist\DSH Desktop Setup x.y.z.exe').Status` —— 未签名阶段预期 `NotSigned`(此时必须在 README/Release 如实标注 SmartScreen 可能提示); 签名接入后预期 `Valid` 且签名者主题正确
-6. Release 校验文件: 上传的 `SHA256SUMS.txt`(由 `scripts/make-sha256sums.ps1` 生成)必须与上传的安装包实际 SHA-256 一致(用户比对哈希的可信依据)
+6. Release 哈希公布: Release 正文公布的安装包 SHA-256(`scripts/make-sha256sums.ps1` 可生成)必须与上传资产的实际哈希一致(用户比对哈希的可信依据)
 
 ## 备注
 
