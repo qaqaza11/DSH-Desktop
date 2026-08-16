@@ -20,7 +20,7 @@ DSH Desktop 是一个 Electron 外壳：把官方 dsh Web UI 装进原生窗口�
 ## 快速开始（用户）
 
 1. 到 [Releases](https://github.com/qaqaza11/DSH-Desktop/releases/latest) 下载 `DSH Desktop Setup x.y.z.exe` 与 `SHA256SUMS.txt`
-2. 核对哈希：`(Get-FileHash "DSH Desktop Setup x.y.z.exe").Hash` 与 `SHA256SUMS.txt` 比对
+2. 核对完整性（防下载损坏/传错，不替代签名防篡改）：`(Get-FileHash "DSH Desktop Setup x.y.z.exe").Hash` 与 `SHA256SUMS.txt` 比对
 3. 运行安装包，自动创建桌面与开始菜单快捷方式
 
 > 安装包尚未代码签名：首次运行 SmartScreen 可能提示「未知发布者」，请选择「仍要运行」（详见下方「安全与信任」）。
