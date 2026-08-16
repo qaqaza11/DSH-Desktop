@@ -1,0 +1,67 @@
+{
+  "name": "dsh-desktop",
+  "version": "0.1.1",
+  "description": "DeepSeek Harness 桌面端：本地启动 dsh web 服务并以 Electron 窗口加载",
+  "main": "main.js",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "pack:dir": "electron-builder --dir",
+    "dist": "electron-builder --win"
+  },
+  "build": {
+    "appId": "com.dsh.desktop",
+    "productName": "DSH Desktop",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "lib/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "assets",
+        "to": "assets"
+      },
+      {
+        "from": "app-update.yml",
+        "to": "app-update.yml"
+      },
+      {
+        "from": "runtime/dsh.cmd",
+        "to": "runtime/dsh.cmd"
+      },
+      {
+        "from": "runtime/node.exe",
+        "to": "runtime/node.exe"
+      }
+    ],
+    "afterPack": "build/after-pack.js",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/app-icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DSH Desktop"
+    }
+  },
+  "devDependencies": {
+    "electron": "^37.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "allowScripts": {
+    "electron@37.10.3": true
+  }
+}
