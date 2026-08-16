@@ -4,7 +4,7 @@
 
 'use strict'
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, shell, dialog, net } = require('electron')
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell, dialog, net, clipboard, ipcMain } = require('electron')
 const { spawn, execFileSync } = require('node:child_process')
 const http = require('node:http')
 const path = require('node:path')
@@ -101,21 +101,44 @@ function findDshCmd() {
 const DSH_CMD = findDshCmd()
 
 // ---------- 服务探测 ----------
-function isServiceUp(port, host = '127.0.0.1') {
+// 不再"端口有 HTTP 响应就认定是 DSH": 请求根路径, 校验 DSH Web 的 HTML 注入标记。
+// 返回状态: 'dsh'(确认是 DSH) | 'http'(有 HTTP 但不是 DSH, 端口疑似被占用) | 'timeout' | 'refused'
+function probeService(port, host = '127.0.0.1') {
   return new Promise((resolve) => {
-    const req = http.get({ host, port, timeout: 1500 }, (res) => {
-      res.resume()
-      resolve(true)
+    const req = http.get({ host, port, path: '/', timeout: 2500 }, (res) => {
+      const chunks = []
+      let size = 0
+      res.on('data', (d) => {
+        size += d.length
+        if (size <= 65536) chunks.push(d)
+        else req.destroy() // 只读前 64KB, 足够校验指纹
+      })
+      res.on('end', () => {
+        const contentType = res.headers['content-type'] || ''
+        const body = Buffer.concat(chunks).toString('utf8')
+        const isDsh = contentType.includes('text/html') && body.includes('__DSH_BOOT__')
+        resolve(isDsh ? 'dsh' : 'http')
+      })
+      res.on('error', () => resolve('http'))
     })
-    req.on('timeout', () => { req.destroy(); resolve(false) })
-    req.on('error', () => resolve(false))
+    req.on('timeout', () => { req.destroy(); resolve('timeout') })
+    req.on('error', () => resolve('refused'))
   })
+}
+
+let lastProbeState = 'refused' // 最近一次探测结果, 失败诊断窗口据此说明端口情况
+const PORT_STATE_TEXT = {
+  dsh: '检测到 DSH 服务(直接复用)',
+  http: '端口返回了 HTTP 响应, 但不是 DSH —— 该端口很可能被其他程序占用',
+  timeout: '端口有程序在监听, 但响应超时 —— 可能被其他程序占用',
+  refused: '端口无服务(连接被拒绝)',
 }
 
 async function waitForService(port, timeoutMs = 30000, childRef = null) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (await isServiceUp(port)) return true
+    lastProbeState = await probeService(port)
+    if (lastProbeState === 'dsh') return true
     // 若启动的 dsh 进程已退出, 提前结束等待, 让上层尽快重试
     if (childRef && (childRef.exitCode !== null || childRef.signalCode !== null)) return false
     await new Promise((r) => setTimeout(r, 400))
@@ -126,12 +149,20 @@ async function waitForService(port, timeoutMs = 30000, childRef = null) {
 // ---------- 启动本地 dsh web ----------
 let serviceReady = false // 服务是否已就绪(用于区分启动期崩溃 vs 运行期崩溃)
 
+// dsh 输出的滚动缓存(仅保留末尾一段), 失败诊断窗口展示用
+const DSH_LOG_TAIL_LIMIT = 4096
+let dshLogTail = ''
+function appendDshLog(chunk) {
+  dshLogTail = (dshLogTail + chunk.toString()).slice(-DSH_LOG_TAIL_LIMIT)
+}
+
 function startDshService() {
   if (!DSH_CMD || !fs.existsSync(DSH_CMD)) {
     console.error(`未找到 dsh CLI (DSH_CMD=${DSH_CMD})`)
     return null
   }
   console.log(`启动 dsh: ${DSH_CMD} --profile ${DSH_PROFILE} --port ${DSH_WEB_PORT}`)
+  dshLogTail = '' // 只保留最近一次尝试的输出, 失败弹窗展示的就是最终那次
   // .cmd 入口在 Windows 上需要 shell: true 才能被 spawn 执行;
   // 路径含空格(如 AppData\Local\Programs\DSH Desktop)时必须加引号, 否则 cmd 截断命令
   const command = process.platform === 'win32' ? `"${DSH_CMD}"` : DSH_CMD
@@ -143,30 +174,33 @@ function startDshService() {
   })
   child.on('error', (err) => {
     console.error(`dsh 进程启动失败: ${err.message}`)
+    appendDshLog(`[dsh 进程启动失败] ${err.message}\n`)
   })
   // spawn 失败时 stdout/stderr 可能为 null, 需防御
-  if (child.stdout) child.stdout.on('data', (d) => process.stdout.write(`[dsh] ${d}`))
-  if (child.stderr) child.stderr.on('data', (d) => process.stderr.write(`[dsh] ${d}`))
+  if (child.stdout) child.stdout.on('data', (d) => { process.stdout.write(`[dsh] ${d}`); appendDshLog(d) })
+  if (child.stderr) child.stderr.on('data', (d) => { process.stderr.write(`[dsh] ${d}`); appendDshLog(d) })
   child.on('exit', (code, signal) => {
     console.log(`dsh 进程退出: code=${code} signal=${signal}`)
+    appendDshLog(`[dsh 进程退出] code=${code} signal=${signal}\n`)
     // 只在服务已就绪后的崩溃才弹窗; 启动期的退出由 ensureService 静默重试处理
     // (首次启动 dsh 需一次性初始化, 可能中途退出一次, 直接报错会误导用户)
     if (!quitting && serviceReady) {
-      dialogError('dsh 服务已退出', `服务进程已退出 (code=${code})。\n可尝试重新打开应用。`)
+      showDiagWindow('dsh 服务已退出')
     }
   })
   return child
 }
 
-// 确保服务就绪: 已有服务直接连; 没有则拉起并带重试(首次启动初始化慢/中途退出都静默处理)
+// 确保服务就绪: 已有 DSH 服务直接连; 没有则拉起并带重试(首次启动初始化慢/中途退出都静默处理)
 async function ensureService() {
-  if (await isServiceUp(DSH_WEB_PORT)) {
+  lastProbeState = await probeService(DSH_WEB_PORT)
+  if (lastProbeState === 'dsh') {
     serviceReady = true
     return true
   }
   const MAX_ATTEMPTS = 3
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    console.log(`[ensureService] 第 ${attempt}/${MAX_ATTEMPTS} 次启动 dsh`)
+    console.log(`[ensureService] 第 ${attempt}/${MAX_ATTEMPTS} 次启动 dsh (端口探测: ${lastProbeState})`)
     childProcess = startDshService()
     if (!childProcess) return false // 找不到 dsh CLI, 重试无意义
     const up = await waitForService(DSH_WEB_PORT, 60000, childProcess)
@@ -174,7 +208,7 @@ async function ensureService() {
       serviceReady = true
       return true
     }
-    console.log(`[ensureService] 第 ${attempt} 次等待超时`)
+    console.log(`[ensureService] 第 ${attempt} 次未就绪`)
     killChildTree()
     await new Promise((r) => setTimeout(r, 3000))
   }
@@ -183,6 +217,78 @@ async function ensureService() {
 
 function dialogError(title, detail) {
   try { dialog.showErrorBox(title, detail) } catch { /* ignore */ }
+}
+
+// ---------- 诊断窗口 ----------
+// 失败时展示可复制/可选中文本的诊断信息: 实际启动命令、端口、端口探测结论、dsh 日志末尾。
+// 内容同时自动写入剪贴板。渲染层保持 sandbox, 只通过 lib/diag-preload.js 暴露复制/关闭两个动作。
+let diagWindow = null
+let diagText = ''
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ))
+}
+
+ipcMain.on('diag-copy', () => {
+  if (diagText) { try { clipboard.writeText(diagText) } catch { /* ignore */ } }
+})
+ipcMain.on('diag-close', () => {
+  if (diagWindow && !diagWindow.isDestroyed()) diagWindow.close()
+})
+
+function showDiagWindow(title) {
+  const command = DSH_CMD ? `"${DSH_CMD}" --profile ${DSH_PROFILE} --port ${DSH_WEB_PORT}` : '(未找到 dsh CLI)'
+  diagText = [
+    '实际启动命令:',
+    `  ${command}`,
+    '',
+    `端口: ${DSH_WEB_PORT}`,
+    `端口探测: ${PORT_STATE_TEXT[lastProbeState] || lastProbeState}`,
+    '',
+    `dsh 输出日志(末尾 ${DSH_LOG_TAIL_LIMIT} 字符):`,
+    '----------------------------------------',
+    dshLogTail.trim() || '(无输出)',
+    '----------------------------------------',
+  ].join('\n')
+  try { clipboard.writeText(diagText) } catch { /* ignore */ }
+
+  const html = `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
+<style>
+  body { margin:0; padding:16px; background:#1e2228; color:#cdd4de; font:13px/1.6 Consolas,"Microsoft YaHei",monospace; }
+  h2 { font-size:15px; margin:0 0 10px; }
+  pre { white-space:pre-wrap; word-break:break-all; background:#14171c; border:1px solid #3a414c; padding:12px; border-radius:6px; max-height:56vh; overflow:auto; }
+  .bar { margin-top:12px; display:flex; gap:8px; }
+  button { padding:6px 16px; border:1px solid #4d9fff; background:transparent; color:#4d9fff; border-radius:4px; cursor:pointer; }
+  button:hover { background:#4d9fff22; }
+  .hint { color:#8b95a3; margin-top:8px; font-size:12px; }
+</style></head><body>
+  <h2>${escapeHtml(title)}</h2>
+  <pre id="diag"></pre>
+  <div class="bar"><button id="copy">复制诊断信息</button><button id="close">关闭</button></div>
+  <div class="hint">诊断信息已自动复制到剪贴板, 也可以直接选中上方文本手动复制。</div>
+  <script>
+    document.getElementById('diag').textContent = ${JSON.stringify(diagText).replace(/</g, '\\u003c')}
+    document.getElementById('copy').onclick = () => { window.diag && window.diag.copy() }
+    document.getElementById('close').onclick = () => { window.diag && window.diag.close() }
+  </script></body></html>`
+
+  if (diagWindow && !diagWindow.isDestroyed()) diagWindow.close()
+  diagWindow = new BrowserWindow({
+    width: 680,
+    height: 560,
+    title,
+    autoHideMenuBar: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      preload: path.join(__dirname, 'lib', 'diag-preload.js'),
+    },
+  })
+  diagWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html)).catch(() => {})
+  diagWindow.on('closed', () => { diagWindow = null })
 }
 
 // ---------- 窗口 ----------
@@ -468,8 +574,11 @@ async function main() {
   // 2) 确保本地服务在运行(带重试, 首次启动初始化慢/中途退出都静默处理)
   const up = await ensureService()
   if (!up) {
-    dialogError('无法启动 dsh 服务', '已多次尝试启动, 均失败。\n请重新打开应用重试, 或联系开发者。')
-    app.quit()
+    console.error(`dsh 服务启动失败 (端口探测: ${lastProbeState})`)
+    // 关掉"正在启动服务"的占位窗口, 只保留诊断窗口; 诊断窗口关闭后退出应用
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy()
+    showDiagWindow('无法启动 dsh 服务')
+    if (diagWindow) diagWindow.once('closed', () => app.quit())
     return
   }
   console.log(`dsh web 已就绪: ${WEB_URL} (profile: ${DSH_PROFILE})`)
