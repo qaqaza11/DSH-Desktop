@@ -83,7 +83,7 @@ repo: DSH-Desktop
 
 打包输出在 `dist/`:
 
-- `DSH Desktop Setup 0.1.1.exe` — 安装包(可选安装目录, 含卸载器, 自动创建桌面/开始菜单快捷方式), 适合分享给别人
+- `DSH Desktop Setup 0.1.2.exe` — 安装包(可选安装目录, 含卸载器, 自动创建桌面/开始菜单快捷方式), 适合分享给别人
 - 上传 GitHub Release 时以本文件作为资产, tag 用 `vx.y.z`(见上方自动更新说明)
 
 ## 目录
