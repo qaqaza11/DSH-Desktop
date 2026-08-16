@@ -2,7 +2,7 @@
 import { createRequire } from 'node:module'
 import assert from 'node:assert'
 const require = createRequire(import.meta.url)
-const { parseUpdateResponse, compareVersions, extractVersion, extractAssets } = require('C:/Users/Liu/Documents/dsh-desktop/lib/update.js')
+const { parseUpdateResponse, compareVersions, extractVersion, extractAssets } = require('../lib/update.js')
 
 const cur = '0.1.0'
 let pass = 0, fail = 0

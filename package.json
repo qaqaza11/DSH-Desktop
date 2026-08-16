@@ -7,6 +7,7 @@
   "private": true,
   "scripts": {
     "start": "electron .",
+    "test": "node test/update.test.mjs",
     "pack:dir": "electron-builder --dir",
     "dist": "electron-builder --win"
   },
