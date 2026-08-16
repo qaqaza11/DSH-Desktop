@@ -14,13 +14,28 @@ const { Readable } = require('node:stream')
 const { parseUpdateResponse } = require('./lib/update.js')
 
 // ---------- 配置 ----------
-// 端口可通过环境变量 DSH_DESKTOP_PORT 覆盖(便于测试/多实例)
-const DSH_WEB_PORT = Number(process.env.DSH_DESKTOP_PORT) || 3080
+// 端口可通过环境变量 DSH_DESKTOP_PORT 覆盖(便于测试/多实例);
+// 必须是 1–65535 的整数, 非法值一律回退默认 3080
+function parsePort(value) {
+  const n = Number(value)
+  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : 3080
+}
+const DSH_WEB_PORT = parsePort(process.env.DSH_DESKTOP_PORT)
 // profile 可通过环境变量 DSH_DESKTOP_PROFILE 覆盖(默认 web; 仅允许字母/数字/-/_, 防止 shell 注入与断词)
 const DSH_PROFILE = /^[A-Za-z0-9_-]{1,64}$/.test(process.env.DSH_DESKTOP_PROFILE || '')
   ? process.env.DSH_DESKTOP_PROFILE
   : 'web'
 const WEB_URL = `http://127.0.0.1:${DSH_WEB_PORT}`
+// 同源判定基准: 用 URL origin(协议+主机+端口)整段比较, 而不是字符串前缀,
+// 避免 "http://127.0.0.1:3080.evil.com"、"http://127.0.0.1:30800" 这类形似地址被嵌入窗口
+const WEB_ORIGIN = new URL(WEB_URL).origin
+function isSameOrigin(targetUrl) {
+  try {
+    return new URL(String(targetUrl)).origin === WEB_ORIGIN
+  } catch {
+    return false // 无法解析(about:blank / data: 等)一律视为非同源
+  }
+}
 const APP_NAME = 'DSH Desktop'
 
 let mainWindow = null
@@ -200,12 +215,14 @@ function createWindow() {
   })
   mainWindow.on('closed', () => { mainWindow = null })
 
-  // 仅允许同源导航, 外部链接交给系统浏览器
+  // 仅允许同源导航(origin 整段比较), 外部链接交给系统浏览器
   mainWindow.webContents.on('will-frame-navigate', (event, url) => {
-    if (!url.startsWith(WEB_URL)) event.preventDefault()
+    const target = typeof url === 'string' ? url : event && event.url
+    if (!isSameOrigin(target)) event.preventDefault()
   })
   mainWindow.webContents.on('will-redirect', (event, url) => {
-    if (!url.startsWith(WEB_URL)) event.preventDefault()
+    const target = typeof url === 'string' ? url : event && event.url
+    if (!isSameOrigin(target)) event.preventDefault()
   })
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http:') || url.startsWith('https:') || url.startsWith('mailto:')) {
