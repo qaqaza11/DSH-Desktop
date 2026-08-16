@@ -106,24 +106,39 @@ const DSH_CMD = findDshCmd()
 // 返回状态: 'dsh'(确认是 DSH) | 'http'(有 HTTP 但不是 DSH, 端口疑似被占用) | 'timeout' | 'refused'
 function probeService(port, host = '127.0.0.1') {
   return new Promise((resolve) => {
+    let settled = false
+    const done = (state) => {
+      if (settled) return
+      settled = true
+      resolve(state)
+    }
     const req = http.get({ host, port, path: '/', timeout: 2500 }, (res) => {
       const chunks = []
       let size = 0
+      const finish = (body) => {
+        const contentType = res.headers['content-type'] || ''
+        const isDsh = contentType.includes('text/html') && body.includes('__DSH_BOOT__')
+        done(isDsh ? 'dsh' : 'http')
+      }
       res.on('data', (d) => {
         size += d.length
-        if (size <= 65536) chunks.push(d)
-        else req.destroy() // 只读前 64KB, 足够校验指纹
+        if (size <= 65536) {
+          chunks.push(d)
+          return
+        }
+        // 超过 64KB 上限: 把当前块的前 8KB 并入后立刻定案(DSH 指纹位于文档头部,
+        // 此时未命中即非 DSH), 而不是销毁连接后继续等待 —— 部分连接被中途销毁后
+        // 既不触发 end 也不触发 error, 会令探测悬挂
+        chunks.push(d.subarray(0, 8192))
+        finish(Buffer.concat(chunks).toString('utf8'))
+        req.destroy()
       })
-      res.on('end', () => {
-        const contentType = res.headers['content-type'] || ''
-        const body = Buffer.concat(chunks).toString('utf8')
-        const isDsh = contentType.includes('text/html') && body.includes('__DSH_BOOT__')
-        resolve(isDsh ? 'dsh' : 'http')
-      })
-      res.on('error', () => resolve('http'))
+      res.on('end', () => finish(Buffer.concat(chunks).toString('utf8')))
+      res.on('error', () => done('http'))
+      res.on('close', () => done('http')) // 兜底: 保证任何连接异常下探测都收敛
     })
-    req.on('timeout', () => { req.destroy(); resolve('timeout') })
-    req.on('error', () => resolve('refused'))
+    req.on('timeout', () => { req.destroy(); done('timeout') })
+    req.on('error', () => done('refused'))
   })
 }
 
@@ -564,19 +579,19 @@ async function checkForUpdates({ manual = false } = {}) {
 async function downloadUpdateInstaller(latestVersion, assets = [], releaseUrl = '') {
   const installers = resolveInstallerUrls(latestVersion, assets)
   if (installers.length === 0) {
-    dialogError('无法下载更新', '更新服务未提供安装包下载地址。')
+    dialogError('无法下载更新', '更新服务未提供合法的安装包下载地址。')
     return
   }
   // 优先 NSIS 安装包, 其次便携版
-  const target = installers.find((u) => u.toLowerCase().includes('setup'))
-    ?? installers.find((u) => u.toLowerCase().includes('portable'))
+  const target = installers.find((u) => u.url.toLowerCase().includes('setup'))
+    ?? installers.find((u) => u.url.toLowerCase().includes('portable'))
     ?? installers[0]
 
   const destDir = path.join(app.getPath('downloads'), 'DSH-Desktop-Updates')
   fs.mkdirSync(destDir, { recursive: true })
   const dest = path.join(destDir, `DSH-Desktop-${latestVersion}-installer.exe`)
 
-  const res = await net.fetch(target, { method: 'GET', cache: 'no-store' })
+  const res = await net.fetch(target.url, { method: 'GET', cache: 'no-store' })
   if (!res.ok) {
     dialogError('下载失败', `HTTP ${res.status}`)
     return
@@ -592,7 +607,9 @@ async function downloadUpdateInstaller(latestVersion, assets = [], releaseUrl = 
   fs.copyFileSync(tmp, dest)
   fs.unlinkSync(tmp)
 
-  // 计算 SHA-256 供人工核对, 并把文件位置与校验值复制到剪贴板
+  // 计算 SHA-256 供人工核对, 并把文件位置与校验值复制到剪贴板。
+  // 注意: 本哈希只能与"发布者在 Release 页公布的 SHA-256"(SHA256SUMS.txt/Release 正文)比对才有意义;
+  // 后续接入发布端校验文件后, 可在此拉取并自动比对, 通过后再放开自动安装。
   const sha256 = await fileSha256(dest)
   const pageUrl = buildReleaseUrl(latestVersion, releaseUrl)
   try {
@@ -604,7 +621,7 @@ async function downloadUpdateInstaller(latestVersion, assets = [], releaseUrl = 
     type: 'info',
     title: '更新已下载',
     message: `DSH Desktop ${latestVersion} 安装包已下载`,
-    detail: `位置: ${dest}\n\nSHA-256:\n${sha256}\n(已复制到剪贴板)\n\n当前版本未启用自动安装: 请核对校验值后手动运行安装包。`,
+    detail: `位置: ${dest}\n\nSHA-256:\n${sha256}\n(已复制到剪贴板)\n\n当前版本未启用自动安装: 请与 Release 页面公布的 SHA-256 核对后手动运行安装包。`,
     buttons,
     defaultId: 0,
     cancelId: buttons.length - 1,
@@ -635,18 +652,37 @@ function buildReleaseUrl(latestVersion, releaseUrl) {
   return ''
 }
 
+// 更新安装包下载地址校验: 只接受 https:, GitHub 资产额外限制为 GitHub/发布资产 CDN 域名
+const GITHUB_ASSET_HOSTS = new Set(['github.com', 'objects.githubusercontent.com'])
+function isValidInstallerUrl(url, { fromGithub = false } = {}) {
+  let parsed
+  try { parsed = new URL(url) } catch { return false }
+  if (parsed.protocol !== 'https:') return false
+  if (fromGithub && !GITHUB_ASSET_HOSTS.has(parsed.hostname)) return false
+  return true
+}
+
 // 从更新响应中提取可能的安装包 URL:
-//   1) DSH_DESKTOP_UPDATE_EXE_URL 环境变量
-//   2) GitHub Releases API 返回的 assets: 优先含 setup 的, 其次 portable, 再任意 .exe
+//   1) DSH_DESKTOP_UPDATE_EXE_URL 环境变量(显式配置, 仅要求 https:)
+//   2) GitHub Releases API 返回的 assets: 优先含 setup 的, 其次 portable, 再任意 .exe;
+//      域名白名单 github.com / objects.githubusercontent.com(下载时会 302 到后者)
+// 返回 [{ url, fromGithub }], 非法地址被忽略并记日志
 function resolveInstallerUrls(latestVersion, assets = []) {
   const urls = []
-  if (process.env.DSH_DESKTOP_UPDATE_EXE_URL) urls.push(process.env.DSH_DESKTOP_UPDATE_EXE_URL)
+  const envUrl = process.env.DSH_DESKTOP_UPDATE_EXE_URL
+  if (envUrl) {
+    if (isValidInstallerUrl(envUrl)) urls.push({ url: envUrl, fromGithub: false })
+    else console.error(`忽略非法更新下载地址(仅允许 https): ${envUrl}`)
+  }
   const list = (Array.isArray(assets) ? assets : [])
     .map(a => (a && typeof a.browser_download_url === 'string') ? a.browser_download_url : '')
     .filter(Boolean)
   const find = kw => list.find(u => u.toLowerCase().includes(kw))
   const fallback = find('setup') ?? find('portable') ?? list.find(u => /\.exe$/i.test(u))
-  if (fallback) urls.push(fallback)
+  if (fallback) {
+    if (isValidInstallerUrl(fallback, { fromGithub: true })) urls.push({ url: fallback, fromGithub: true })
+    else console.error(`忽略非法 GitHub 资产下载地址: ${fallback}`)
+  }
   return urls
 }
 // ---------- 生命周期 ----------

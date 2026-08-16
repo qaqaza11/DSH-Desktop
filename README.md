@@ -69,7 +69,7 @@ repo: DSH-Desktop
 - 版本比较用严格 SemVer(支持 `v` 前缀与预发布版本); 有更新时弹窗确认后下载安装包
 - 安全边界: 在接入代码签名或 SHA-256 自动校验之前, 下载后**不自动执行安装包** —— 弹出文件 SHA-256(自动复制到剪贴板)供与 Release 页面核对, 并提供「打开所在文件夹 / 查看 Release 页面」入口, 由用户手动安装
 - 安装包选择顺序: 资产名含 `setup` > 含 `portable` > 任意 `.exe`; 也支持 `DSH_DESKTOP_UPDATE_EXE_URL` 直连
-- 发布流程: `npm run dist` → 把 `dist/DSH Desktop Setup x.y.z.exe` 作为 release 资产上传, tag 用 `vx.y.z` 即可
+- 发布流程: `npm run dist` → `powershell -ExecutionPolicy Bypass -File scripts/make-sha256sums.ps1` 生成 `dist/SHA256SUMS.txt` → 把 `DSH Desktop Setup x.y.z.exe` **与 `SHA256SUMS.txt` 一起**作为 release 资产上传(这是用户比对安装包 SHA-256 的可信依据, 缺失时客户端展示的校验值没有比对对象), tag 用 `vx.y.z` 即可
 
 ## Windows 信任与代码签名(如实说明)
 

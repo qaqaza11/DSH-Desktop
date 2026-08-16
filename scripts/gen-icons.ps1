@@ -1,4 +1,4 @@
-# 图标生成脚本: 从 app-icon.png 生成多尺寸 icon.ico 和托盘图标系列
+﻿# 图标生成脚本: 从 app-icon.png 生成多尺寸 icon.ico 和托盘图标系列
 # 用法: pwsh -File scripts/gen-icons.ps1
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing

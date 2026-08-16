@@ -1,4 +1,4 @@
-# 拉取并组装 runtime/ (node.exe + dsh 包), 供 npm run dist 打包使用。
+﻿# 拉取并组装 runtime/ (node.exe + dsh 包), 供 npm run dist 打包使用。
 # runtime/ 不进 git, 新克隆的仓库在打包前必须先跑本脚本。
 #
 # 用法:
