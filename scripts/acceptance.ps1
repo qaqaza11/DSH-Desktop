@@ -1,4 +1,4 @@
-﻿# 最小发布验收: 在"干净用户环境"下对已安装的 DSH Desktop 做 6 项验收
+# 最小发布验收: 在"干净用户环境"下对已安装的 DSH Desktop 做 6 项验收
 #
 # 环境定义(模拟全新 Windows 用户, 无需真实新建账号):
 #   * 每次验收使用独立的 DSH_HOME 临时目录(全新 dsh 数据)
@@ -177,6 +177,53 @@ Wait-For { -not (Get-Process -Id $appF.Id -ErrorAction SilentlyContinue) } 60 | 
 Stop-TestApp $appF.Id
 Stop-Process -Id $mock.Id -Force -ErrorAction SilentlyContinue
 Kill-StrayDsh '3204'
+
+# ---------- 7) 未设置端口时自动挑选空闲端口 ----------
+Write-Host "`n== G: 自动端口(独立实例) =="
+$envG = New-CleanEnv 'g' 0
+$env:DSH_HOME = $envG.Home
+Remove-Item Env:\DSH_DESKTOP_PORT -ErrorAction SilentlyContinue
+Remove-Item Env:\DSH_DESKTOP_WORKDIR -ErrorAction SilentlyContinue
+Remove-Item Env:\DSH_DESKTOP_UPDATE_URL -ErrorAction SilentlyContinue
+$env:DSH_DESKTOP_TEST_QUIT_MS = '45000'
+$appG = Start-TestApp $envG
+$autoOk = Wait-For {
+  (Test-Path $envG.Log) -and (Select-String -Path $envG.Log -Pattern 'dsh web 已就绪: http://127.0.0.1:(\d+)' -Quiet -ErrorAction SilentlyContinue)
+} 90
+$autoPort = 0
+if ($autoOk) {
+  $m = Select-String -Path $envG.Log -Pattern 'dsh web 已就绪: http://127.0.0.1:(\d+)' | Select-Object -First 1
+  if ($m) { $autoPort = [int]$m.Matches[0].Groups[1].Value }
+}
+$probeG = if ($autoPort -gt 0) { Wait-DshHttp $autoPort 15 } else { $false }
+Assert 'G 未设置端口时自动挑选空闲端口并独立服务' ($autoOk -and $probeG -and $autoPort -ne 3080) "自动端口=$autoPort 探测=$probeG"
+Wait-For { -not (Get-Process -Id $appG.Id -ErrorAction SilentlyContinue) } 60 | Out-Null
+Stop-TestApp $appG.Id
+Kill-StrayDsh ([string]$autoPort)
+
+# ---------- 8) 工作目录生效 ----------
+Write-Host "`n== H: 工作目录(cwd)生效 =="
+$envH = New-CleanEnv 'h' 3205
+$work = Join-Path $envH.Base 'my-project'
+New-Item -ItemType Directory -Force -Path $work | Out-Null
+$env:DSH_HOME = $envH.Home
+$env:DSH_DESKTOP_PORT = '3205'
+$env:DSH_DESKTOP_WORKDIR = $work
+Remove-Item Env:\DSH_DESKTOP_UPDATE_URL -ErrorAction SilentlyContinue
+$env:DSH_DESKTOP_TEST_QUIT_MS = '45000'
+$appH = Start-TestApp $envH
+$svcH = Wait-DshHttp 3205 90
+# 启动日志必须记录实际传入的 cwd
+$cwdOk = Wait-For {
+  (Test-Path $envH.Log) -and (Select-String -Path $envH.Log -Pattern ([regex]::Escape("工作目录: $work")) -Quiet -ErrorAction SilentlyContinue)
+} 60
+# 附加证据: dsh 按 cwd 编码会话目录(C:\a\b -> '-C-a-b--')
+$encoded = '--' + (($work -replace ':', '') -replace '[\\/]', '-') + '--'
+$sessOk = Wait-For { Test-Path (Join-Path $envH.Home "sessions\$encoded") } 45
+Assert 'H 工作目录(DSH_DESKTOP_WORKDIR)生效' ($svcH -and $cwdOk) "服务=$svcH cwd 日志=$cwdOk 会话目录存在=$sessOk"
+Wait-For { -not (Get-Process -Id $appH.Id -ErrorAction SilentlyContinue) } 60 | Out-Null
+Stop-TestApp $appH.Id
+Kill-StrayDsh '3205'
 
 # ---------- 汇总 ----------
 Write-Host "`n===== 验收汇总 ====="

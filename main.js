@@ -7,30 +7,36 @@
 const { app, BrowserWindow, Tray, Menu, nativeImage, shell, dialog, net, clipboard, ipcMain } = require('electron')
 const { spawn, execFileSync } = require('node:child_process')
 const http = require('node:http')
+const netServer = require('node:net')
 const path = require('node:path')
 const fs = require('node:fs')
 const os = require('node:os')
 const { Readable } = require('node:stream')
 const { createHash } = require('node:crypto')
 const { parseUpdateResponse } = require('./lib/update.js')
+const { loadSettings, saveSettings } = require('./lib/settings.js')
 
 // ---------- 配置 ----------
-// 端口可通过环境变量 DSH_DESKTOP_PORT 覆盖(便于测试/多实例);
-// 必须是 1–65535 的整数, 非法值一律回退默认 3080
+// 端口策略:
+//   显式设置 DSH_DESKTOP_PORT -> 使用该端口(1–65535 的整数, 非法值回退 3080),
+//                               并保留"该端口上已有 DSH 服务则直接复用"的行为(如想附加到浏览器端实例)
+//   未设置 -> 启动时自动挑选空闲端口: 桌面端始终是独立实例, 与浏览器端(3080)/其他实例互不干扰
 function parsePort(value) {
   const n = Number(value)
   return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : 3080
 }
-const DSH_WEB_PORT = parsePort(process.env.DSH_DESKTOP_PORT)
+let DSH_WEB_PORT = process.env.DSH_DESKTOP_PORT ? parsePort(process.env.DSH_DESKTOP_PORT) : 0 // 0 = 待自动挑选
 // profile 可通过环境变量 DSH_DESKTOP_PROFILE 覆盖(默认 web; 仅允许字母/数字/-/_, 防止 shell 注入与断词)
 const DSH_PROFILE = /^[A-Za-z0-9_-]{1,64}$/.test(process.env.DSH_DESKTOP_PROFILE || '')
   ? process.env.DSH_DESKTOP_PROFILE
   : 'web'
-const WEB_URL = `http://127.0.0.1:${DSH_WEB_PORT}`
+// 端口确定后才会计算(见 preparePort), 之前保持空并拒绝任何同源判定
+let WEB_URL = ''
+let WEB_ORIGIN = ''
 // 同源判定基准: 用 URL origin(协议+主机+端口)整段比较, 而不是字符串前缀,
 // 避免 "http://127.0.0.1:3080.evil.com"、"http://127.0.0.1:30800" 这类形似地址被嵌入窗口
-const WEB_ORIGIN = new URL(WEB_URL).origin
 function isSameOrigin(targetUrl) {
+  if (!WEB_ORIGIN) return false
   try {
     return new URL(String(targetUrl)).origin === WEB_ORIGIN
   } catch {
@@ -38,6 +44,62 @@ function isSameOrigin(targetUrl) {
   }
 }
 const APP_NAME = 'DSH Desktop'
+
+// 从操作系统申请一个空闲端口(绑定后立即释放, 交由 dsh 使用)
+function pickFreePort(host = '127.0.0.1') {
+  return new Promise((resolve, reject) => {
+    const srv = netServer.createServer()
+    srv.unref()
+    srv.on('error', reject)
+    srv.listen(0, host, () => {
+      const port = srv.address().port
+      srv.close(() => resolve(port))
+    })
+  })
+}
+
+// 端口与同源基准就绪: 显式端口直接用; 未设置则自动挑选空闲端口
+async function preparePort() {
+  if (DSH_WEB_PORT === 0) {
+    DSH_WEB_PORT = await pickFreePort()
+    console.log(`未指定端口, 自动挑选空闲端口: ${DSH_WEB_PORT}`)
+  }
+  WEB_URL = `http://127.0.0.1:${DSH_WEB_PORT}`
+  WEB_ORIGIN = new URL(WEB_URL).origin
+}
+
+// ---------- 工作目录 ----------
+// 会话工作目录(cwd)解析顺序:
+//   DSH_DESKTOP_WORKDIR 环境变量 -> userData/settings.json 记住的「打开项目…」目录 -> 文档目录 -> 用户主目录
+let currentWorkDir = ''
+function resolveWorkDir() {
+  const envDir = process.env.DSH_DESKTOP_WORKDIR
+  if (envDir && fs.existsSync(envDir)) return envDir
+  const saved = loadSettings(app.getPath('userData')).workDir
+  if (saved && fs.existsSync(saved)) return saved
+  const docs = app.getPath('documents')
+  if (fs.existsSync(docs)) return docs
+  return os.homedir()
+}
+
+// 托盘「打开项目…」: 选择目录 -> 记住 -> 重启本地 dsh, 让新会话从新目录开始
+async function chooseWorkDir() {
+  const options = {
+    title: '选择工作目录',
+    buttonLabel: '打开',
+    properties: ['openDirectory'],
+  }
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined
+  const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+  const dir = result.filePaths && result.filePaths[0]
+  if (!dir) return
+  currentWorkDir = dir
+  saveSettings(app.getPath('userData'), { workDir: dir })
+  console.log(`切换工作目录: ${dir}`)
+  killChildTree()
+  serviceReady = false
+  void startup()
+}
 
 let mainWindow = null
 let tray = null
@@ -187,6 +249,8 @@ function startDshService() {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
     shell: process.platform === 'win32',
+    // 会话从用户选择的工作目录开始(默认文档目录), 与浏览器端"在哪个目录跑 dsh web"行为一致
+    cwd: currentWorkDir && fs.existsSync(currentWorkDir) ? currentWorkDir : undefined,
   })
   child.on('error', (err) => {
     console.error(`dsh 进程启动失败: ${err.message}`)
@@ -470,6 +534,7 @@ function createTray() {
   const menu = Menu.buildFromTemplate([
     { label: `打开 ${APP_NAME}`, click: () => showWindow() },
     { type: 'separator' },
+    { label: '打开项目…', click: () => { void chooseWorkDir() } },
     { label: '打开服务地址', click: () => shell.openExternal(WEB_URL) },
     { label: '检查更新', click: () => { void checkForUpdates({ manual: true }) } },
     { type: 'separator' },
@@ -696,6 +761,10 @@ async function startup() {
   if (startupInProgress) return false
   startupInProgress = true
   try {
+    // 0) 端口与工作目录(仅首次; 重试/切目录时沿用已有端口)
+    if (!WEB_URL) await preparePort()
+    if (!currentWorkDir) currentWorkDir = resolveWorkDir()
+
     // 1) 窗口(被销毁则重建, 显示"正在启动服务"占位页), 避免用户面对空白
     if (!mainWindow || mainWindow.isDestroyed()) createWindow()
 
@@ -708,7 +777,7 @@ async function startup() {
       showDiagWindow('无法启动 dsh 服务', { quitOnClose: true })
       return false
     }
-    console.log(`dsh web 已就绪: ${WEB_URL} (profile: ${DSH_PROFILE})`)
+    console.log(`dsh web 已就绪: ${WEB_URL} (profile: ${DSH_PROFILE}, 工作目录: ${currentWorkDir})`)
 
     // 3) 加载真实界面 + 托盘; 若是"重试"路径, 先撤掉退出标记再关诊断窗口
     diagQuitOnClose = false

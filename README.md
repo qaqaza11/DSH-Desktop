@@ -42,14 +42,16 @@ npm run dist
 
 `fetch-runtime.ps1` 的安全策略: node.exe 下载后做 SHA-256 校验(内置官方哈希清单, 矩阵外版本动态对照官方 SHASUMS256.txt); 只允许兼容矩阵里验证过的 DSH/Node 组合(其他组合必须显式加 `-Force`); 已有的 runtime 版本与期望不符时直接报错拒绝, 防止旧 runtime 被打进安装包。
 
-- 启动时若指定端口没有服务, 会自动拉起 `dsh --profile <profile> --port <port>`(默认 `web` / `3080`); 端口探测会校验 DSH 的 HTML 指纹(`__DSH_BOOT__`), 端口被其他程序占用时不会误连
+- 启动时会自动拉起 `dsh --profile <profile> --port <port>`(默认 `web`); 端口策略: **未设置** `DSH_DESKTOP_PORT` 时自动挑选空闲端口(桌面端始终是独立实例, 与浏览器端互不干扰); **显式设置**时保留"复用该端口已有 DSH 服务"行为(可附加到浏览器端实例); 端口探测会校验 DSH 的 HTML 指纹(`__DSH_BOOT__`), 端口被其他程序占用时不会误连
+- 会话工作目录: 托盘「打开项目…」选择并记住(`userData\settings.json`, 切换后自动重启本地 dsh 使新会话生效), 或 `DSH_DESKTOP_WORKDIR` 环境变量指定; 都未设置时默认文档目录
 - 启动失败会弹出可复制的诊断窗口(实际启动命令、端口探测结论、dsh 日志末尾), 并自动复制到剪贴板; 窗口内提供「重试启动」(免退出重开)与「打开日志」按钮, 日志落盘在 `%APPDATA%\dsh-desktop\logs\dsh-desktop.log`
-- 发布前验收: `powershell -ExecutionPolicy Bypass -File scripts/acceptance.ps1`(6 项自动化验收, 详见 [docs/acceptance.md](docs/acceptance.md))
+- 发布前验收: `powershell -ExecutionPolicy Bypass -File scripts/acceptance.ps1`(8 项自动化验收, 详见 [docs/acceptance.md](docs/acceptance.md))
 - 关闭窗口 = 最小化到托盘; 托盘菜单可重新打开/退出
 - 托盘菜单「检查更新」手动检查更新; 启动后 8 秒自动静默检查, 之后每 6 小时一次
 - 环境变量:
   - `DSH_DESKTOP_DSH_CMD` — 指定 dsh CLI 路径
-  - `DSH_DESKTOP_PORT` — 覆盖服务端口(默认 3080; 必须是 1–65535 的整数, 非法值回退 3080)
+  - `DSH_DESKTOP_WORKDIR` — 会话工作目录(优先级高于「打开项目…」记住的目录; 目录不存在时回退)
+  - `DSH_DESKTOP_PORT` — 覆盖服务端口(默认自动挑选空闲端口; 显式设置时必须是 1–65535 的整数, 非法值回退 3080)
   - `DSH_DESKTOP_PROFILE` — 覆盖 dsh profile(默认 `web`, 仅允许字母/数字/`-`/`_`; 多实例时与端口一起错开, 避免与已有 3080 服务撞车)。注意: 目标 profile 必须先包含 Web 界面 bundle —— 用 `dsh plugin --profile <name> add @deepseek-ai/dsh-web-app` 创建, 或直接克隆已有的 `~/.dsh/profiles/web` 整个目录; 只有 `dsh-base` 的裸 profile 没有浏览器界面, 会一直起不来
   - `DSH_DESKTOP_UPDATE_URL` — 自定义更新检查地址(返回 `{"version":"x.y.z"}` 或 `{"tag_name":"vx.y.z"}`, 如 GitHub Releases API)
   - `DSH_DESKTOP_UPDATE_REPO` — 更省事: 填 `owner/repo`(如 `someone/dsh-desktop`), 自动使用 `https://api.github.com/repos/<owner/repo>/releases/latest` 作为更新源
