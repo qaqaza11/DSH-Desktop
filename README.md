@@ -34,10 +34,13 @@ npm run dist    # 打包 (NSIS 安装包)
 `runtime/`(node.exe + dsh 包, 约 330MB)和 `node_modules/`、`dist/` 都不进 git。克隆后先重建运行时再打包:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/fetch-runtime.ps1   # 拉取 node.exe + @deepseek-ai/dsh
+powershell -ExecutionPolicy Bypass -File scripts/fetch-runtime.ps1         # 默认已验证组合(DSH 0.1.0-rc.6 + Node 24.18.0)
+powershell -ExecutionPolicy Bypass -File scripts/fetch-runtime.ps1 -Force  # 强制重新下载/重装(清理旧 runtime)
 npm install
 npm run dist
 ```
+
+`fetch-runtime.ps1` 的安全策略: node.exe 下载后做 SHA-256 校验(内置官方哈希清单, 矩阵外版本动态对照官方 SHASUMS256.txt); 只允许兼容矩阵里验证过的 DSH/Node 组合(其他组合必须显式加 `-Force`); 已有的 runtime 版本与期望不符时直接报错拒绝, 防止旧 runtime 被打进安装包。
 
 - 启动时若指定端口没有服务, 会自动拉起 `dsh --profile <profile> --port <port>`(默认 `web` / `3080`); 端口探测会校验 DSH 的 HTML 指纹(`__DSH_BOOT__`), 端口被其他程序占用时不会误连
 - 启动失败会弹出可复制的诊断窗口(实际启动命令、端口探测结论、dsh 日志末尾), 并自动复制到剪贴板; 窗口内提供「重试启动」(免退出重开)与「打开日志」按钮, 日志落盘在 `%APPDATA%\dsh-desktop\logs\dsh-desktop.log`
