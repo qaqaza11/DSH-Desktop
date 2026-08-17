@@ -1,6 +1,6 @@
 # DSH Desktop
 
-**DeepSeek Harness 的 Windows 桌面版** —— 把 dsh 网页界面装进一个独立窗口，双击就用，什么都不用装。
+**DeepSeek Harness 的 Windows 桌面版** —— 保留web界面并封装为桌面端，一键下载且保留原版使用体验。
 
 ## 下载安装
 
