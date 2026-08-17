@@ -7,8 +7,15 @@
 1. 打开 [下载页面](https://github.com/qaqaza11/DSH-Desktop/releases/latest)
 2. 下载 `DSH Desktop Setup x.y.z.exe`
 3. 双击安装 → 桌面出现「DSH Desktop」图标 → 启动
+   
+   效果： <img width="1902" height="1172" alt="屏幕截图 2026-08-17 102211" src="https://github.com/user-attachments/assets/64d1720c-03aa-4a51-bc11-bb4de1dd1011" />
+    <img width="749" height="540" alt="屏幕截图 2026-08-17 102531" src="https://github.com/user-attachments/assets/9218d7ca-2438-402d-9587-0821530e99b1" />
+    <img width="749" height="540" alt="屏幕截图 2026-08-17 102554" src="https://github.com/user-attachments/assets/dfd53869-d1a5-49cc-936a-85d08a93eb6a" />
+    <img width="749" height="540" alt="屏幕截图 2026-08-17 102554" src="https://github.com/user-attachments/assets/a96b00ee-c268-4bff-aea0-2b1ed665273a" />
 
 > 首次运行如果 Windows 提示「未知发布者」（安装包暂未代码签名），点「仍要运行」即可。
+
+
 
 ## 特点
 
