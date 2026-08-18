@@ -11,7 +11,6 @@ const netServer = require('node:net')
 const path = require('node:path')
 const fs = require('node:fs')
 const os = require('node:os')
-const { Readable } = require('node:stream')
 const { createHash } = require('node:crypto')
 const { parseUpdateResponse } = require('./lib/update.js')
 const { loadSettings, saveSettings } = require('./lib/settings.js')
@@ -513,6 +512,29 @@ function loadingHtml() {
 }
 
 // ---------- 托盘 ----------
+// 自动检测发现的新版本(空 = 无); 用于托盘 tooltip 与菜单文字提示, 不弹窗
+let updateHintVersion = ''
+
+function updateTrayUpdateHint(version) {
+  updateHintVersion = version || ''
+  if (tray) tray.setToolTip(version ? `${APP_NAME} — 发现新版本 ${version}` : APP_NAME)
+  rebuildTrayMenu()
+}
+
+function rebuildTrayMenu() {
+  if (!tray) return
+  const menu = Menu.buildFromTemplate([
+    { label: `打开 ${APP_NAME}`, click: () => showWindow() },
+    { type: 'separator' },
+    { label: '打开项目…', click: () => { void chooseWorkDir() } },
+    { label: '打开服务地址', click: () => shell.openExternal(WEB_URL) },
+    { label: updateHintVersion ? `检查更新（发现 ${updateHintVersion}）` : '检查更新', click: () => { void checkForUpdates({ manual: true }) } },
+    { type: 'separator' },
+    { label: '退出', click: () => quitApp() },
+  ])
+  tray.setContextMenu(menu)
+}
+
 function createTray() {
   // 基础 16x16 + 多 DPI 表示(@1.25x/@1.5x/@2x), 高分屏不模糊
   let icon = nativeImage.createFromPath(assetPath('tray-icon.png'))
@@ -531,16 +553,7 @@ function createTray() {
   }
   tray = new Tray(icon)
   tray.setToolTip(APP_NAME)
-  const menu = Menu.buildFromTemplate([
-    { label: `打开 ${APP_NAME}`, click: () => showWindow() },
-    { type: 'separator' },
-    { label: '打开项目…', click: () => { void chooseWorkDir() } },
-    { label: '打开服务地址', click: () => shell.openExternal(WEB_URL) },
-    { label: '检查更新', click: () => { void checkForUpdates({ manual: true }) } },
-    { type: 'separator' },
-    { label: '退出', click: () => quitApp() },
-  ])
-  tray.setContextMenu(menu)
+  rebuildTrayMenu()
   tray.on('click', () => showWindow())
 }
 
@@ -604,38 +617,108 @@ async function checkForUpdates({ manual = false } = {}) {
     }
     if (result.status === 'update-available') {
       console.log(`发现新版本: ${result.latestVersion} (当前 ${result.currentVersion})`)
-      updateDialogOpen = true
-      try {
-        const choice = await dialog.showMessageBox({
+      if (manual) {
+        // 手动触发: 弹确认后下载
+        updateDialogOpen = true
+        try {
+          const choice = await dialog.showMessageBox({
+            type: 'info',
+            title: '发现新版本',
+            message: `${APP_NAME} ${result.latestVersion} 已发布`,
+            detail: `当前版本: ${result.currentVersion}\n是否下载安装包?`,
+            buttons: ['下载', '稍后'],
+            defaultId: 0,
+            cancelId: 1,
+            noLink: true,
+          })
+          if (choice.response === 0) {
+            await downloadUpdateInstaller(result.latestVersion, result.assets, result.releaseUrl)
+          }
+        } finally {
+          updateDialogOpen = false
+        }
+      } else {
+        // 后台自动检测: 不弹窗, 仅在托盘提示(菜单文字 + tooltip)
+        updateTrayUpdateHint(result.latestVersion)
+      }
+    } else {
+      if (manual) {
+        await dialog.showMessageBox({
           type: 'info',
-          title: '发现新版本',
-          message: `${APP_NAME} ${result.latestVersion} 已发布`,
-          detail: `当前版本: ${result.currentVersion}\n是否下载安装包?`,
-          buttons: ['下载', '稍后'],
-          defaultId: 0,
-          cancelId: 1,
+          title: '已是最新版本',
+          message: `${APP_NAME} ${result.currentVersion}`,
+          detail: '当前已是最新版本。',
+          buttons: ['OK'],
           noLink: true,
         })
-        if (choice.response === 0) {
-          await downloadUpdateInstaller(result.latestVersion, result.assets, result.releaseUrl)
-        }
-      } finally {
-        updateDialogOpen = false
+      } else {
+        updateTrayUpdateHint('')
       }
-    } else if (manual) {
-      await dialog.showMessageBox({
-        type: 'info',
-        title: '已是最新版本',
-        message: `${APP_NAME} ${result.currentVersion}`,
-        detail: '当前已是最新版本。',
-        buttons: ['OK'],
-        noLink: true,
-      })
     }
   } catch (err) {
     console.error(`检查更新失败: ${err.message}`)
     if (manual) dialogError('检查更新失败', `${err.message}`)
   }
+}
+
+// ---------- 下载进度窗口 ----------
+let progressWindow = null
+
+function formatBytes(n) {
+  if (!Number.isFinite(n) || n < 0) return ''
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+function showDownloadProgress(latestVersion) {
+  if (progressWindow && !progressWindow.isDestroyed()) return
+  const ver = escapeHtml(latestVersion)
+  const html = `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>下载更新</title>
+<style>
+  body { margin:0; padding:20px; background:#1e2228; color:#cdd4de; font:13px/1.6 Consolas,"Microsoft YaHei",monospace; }
+  .title { font-size:14px; margin-bottom:14px; }
+  .track { height:8px; background:#14171c; border:1px solid #3a414c; border-radius:4px; overflow:hidden; }
+  .fill { height:100%; width:0%; background:#4d9fff; transition:width .15s; }
+  .text { margin-top:10px; font-size:12px; color:#8b95a3; }
+</style></head><body>
+  <div class="title">正在下载 ${ver} …</div>
+  <div class="track"><div class="fill" id="fill"></div></div>
+  <div class="text" id="text">正在连接…</div>
+  <script>
+    window.__progress = (pct, received, total) => {
+      document.getElementById('fill').style.width = (pct >= 0 ? pct : 6) + '%'
+      document.getElementById('text').textContent = pct >= 0
+        ? pct + '%  (' + received + (total ? ' / ' + total : '') + ')'
+        : received
+    }
+  </script></body></html>`
+  progressWindow = new BrowserWindow({
+    width: 420,
+    height: 150,
+    title: '下载更新',
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    autoHideMenuBar: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  })
+  progressWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html)).catch(() => {})
+  progressWindow.on('closed', () => { progressWindow = null })
+}
+
+function updateDownloadProgress(total, received) {
+  if (!progressWindow || progressWindow.isDestroyed()) return
+  const pct = total > 0 ? Math.min(100, Math.round((received / total) * 100)) : -1
+  const args = JSON.stringify([pct, formatBytes(received), total > 0 ? formatBytes(total) : ''])
+  progressWindow.webContents.executeJavaScript(`window.__progress.apply(null, ${args})`).catch(() => {})
+}
+
+function closeDownloadProgress() {
+  if (progressWindow && !progressWindow.isDestroyed()) progressWindow.close()
+  progressWindow = null
 }
 
 // 下载安装包但【不自动执行】: 在接入代码签名或 SHA-256 自动校验之前,
@@ -656,21 +739,51 @@ async function downloadUpdateInstaller(latestVersion, assets = [], releaseUrl = 
   fs.mkdirSync(destDir, { recursive: true })
   const dest = path.join(destDir, `DSH-Desktop-${latestVersion}-installer.exe`)
 
-  const res = await net.fetch(target.url, { method: 'GET', cache: 'no-store' })
+  showDownloadProgress(latestVersion)
+  let res
+  try {
+    res = await net.fetch(target.url, { method: 'GET', cache: 'no-store' })
+  } catch (err) {
+    closeDownloadProgress()
+    dialogError('下载失败', err.message)
+    return
+  }
   if (!res.ok) {
+    closeDownloadProgress()
     dialogError('下载失败', `HTTP ${res.status}`)
     return
   }
+  const total = Number(res.headers.get('content-length')) || 0
   const tmp = path.join(os.tmpdir(), `dsh-update-${Date.now()}.exe`)
-  // 流式落盘: 安装包动辄上百 MB, 避免整体缓冲进内存
-  await new Promise((resolve, reject) => {
-    const out = fs.createWriteStream(tmp)
-    Readable.fromWeb(res.body).pipe(out)
-    out.on('finish', resolve)
-    out.on('error', reject)
-  })
-  fs.copyFileSync(tmp, dest)
-  fs.unlinkSync(tmp)
+  // 流式落盘 + 实时进度: 安装包动辄上百 MB, 避免整体缓冲进内存, 同时更新进度条
+  try {
+    let received = 0
+    await new Promise((resolve, reject) => {
+      const out = fs.createWriteStream(tmp)
+      out.on('error', reject)
+      const reader = res.body.getReader()
+      const pump = async () => {
+        try {
+          for (;;) {
+            const { done, value } = await reader.read()
+            if (done) { out.end(); resolve(); return }
+            received += value.byteLength
+            out.write(Buffer.from(value))
+            updateDownloadProgress(total, received)
+          }
+        } catch (err) { out.destroy(); reject(err) }
+      }
+      void pump()
+    })
+    fs.copyFileSync(tmp, dest)
+    fs.unlinkSync(tmp)
+    closeDownloadProgress()
+  } catch (err) {
+    closeDownloadProgress()
+    try { fs.unlinkSync(tmp) } catch { /* ignore */ }
+    dialogError('下载失败', err.message)
+    return
+  }
 
   // 计算 SHA-256 供人工核对, 并把文件位置与校验值复制到剪贴板。
   // 注意: 本哈希只能与"发布者在 Release 页公布的 SHA-256"(SHA256SUMS.txt/Release 正文)比对才有意义;
