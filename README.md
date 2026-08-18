@@ -45,14 +45,14 @@
 ```powershell
 git clone https://github.com/qaqaza11/DSH-Desktop.git
 cd DSH-Desktop
-powershell -ExecutionPolicy Bypass -File scripts/fetch-runtime.ps1   # 拉取打包运行时(node.exe + dsh, 带 SHA-256 校验)
+pwsh -NoProfile -File scripts/fetch-runtime.ps1   # 拉取打包运行时(node.exe + dsh, 带 SHA-256 校验)
 npm install
 npm start        # 开发运行
 npm test         # 单元测试
 npm run dist     # 打包 Windows 安装包
 ```
 
-`fetch-runtime.ps1` 只允许兼容矩阵内验证过的版本组合（当前 DSH 0.1.0-rc.6 + Node 24.18.0）；已有 runtime 版本不符会拒绝打包（`-Force` 强制重建）。
+`fetch-runtime.ps1` 只允许兼容矩阵内验证过的版本组合（当前 DSH 0.1.0-rc.7 + Node 24.18.0）；已有 runtime 版本不符会拒绝打包（`-Force` 强制重建）。
 
 ### 配置（环境变量）
 
@@ -82,7 +82,7 @@ npm run dist     # 打包 Windows 安装包
 
 ### 验收
 
-8 项自动化验收：`powershell -ExecutionPolicy Bypass -File scripts/acceptance.ps1`（详见 [docs/acceptance.md](docs/acceptance.md)）。
+8 项自动化验收：`pwsh -NoProfile -File scripts/acceptance.ps1`（详见 [docs/acceptance.md](docs/acceptance.md)）。
 
 ### 目录结构
 
