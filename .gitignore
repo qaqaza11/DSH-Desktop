@@ -1,6 +1,7 @@
 # 依赖与构建产物(体积巨大, 不进仓库; 克隆后按 README 重建)
 node_modules/
 dist/
+dist-v0.1.2-backup/
 out/
 
 # 打包用运行时: node.exe 与 dsh 包由 scripts/fetch-runtime.ps1 重新拉取

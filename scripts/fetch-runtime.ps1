@@ -1,4 +1,4 @@
-﻿# 拉取并组装 runtime/ (node.exe + dsh 包), 供 npm run dist 打包使用。
+# 拉取并组装 runtime/ (node.exe + dsh 包), 供 npm run dist 打包使用。
 # runtime/ 不进 git, 新克隆的仓库在打包前必须先跑本脚本。
 #
 # 用法:
@@ -12,7 +12,7 @@
 #   * 已有的 runtime 若版本与期望不符, 直接报错拒绝使用(加 -Force 才会重建), 防止旧 runtime 被打进安装包
 param(
   [string]$NodeVersion = '24.18.0',
-  [string]$DshVersion = '0.1.0-rc.6',
+  [string]$DshVersion = '0.1.0-rc.7',
   [switch]$Force
 )
 $ErrorActionPreference = 'Stop'
@@ -20,7 +20,7 @@ $ErrorActionPreference = 'Stop'
 # 兼容矩阵: 只收录经过"下载 -> 打包 -> 启动"全链路验证的组合。
 # 新增组合时: 先用官方 SHASUMS256.txt 确认 node.exe 哈希, 再实测打包与启动。
 $Compatible = @(
-  @{ Dsh = '0.1.0-rc.6'; Node = '24.18.0'; NodeSha256 = '9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de' }
+  @{ Dsh = '0.1.0-rc.7'; Node = '24.18.0'; NodeSha256 = '9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de' }
 )
 
 # 内置 SHA-256 清单(node 版本 -> win-x64/node.exe 官方哈希)

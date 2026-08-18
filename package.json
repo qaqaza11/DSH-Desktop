@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "DeepSeek Harness 桌面端：本地启动 dsh web 服务并以 Electron 窗口加载",
   "main": "main.js",
   "license": "MIT",
